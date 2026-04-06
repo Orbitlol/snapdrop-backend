@@ -3,4 +3,7 @@ services:
     name: snapdrop-backend
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    # --timeout 300  : give each worker 5 min before gunicorn kills it (default is 30s — kills streams)
+    # --workers 2    : two sync workers is fine for a small API
+    # --keep-alive 5 : keep connections open longer for streaming responses
+    startCommand: gunicorn app:app --timeout 300 --workers 2 --keep-alive 5
