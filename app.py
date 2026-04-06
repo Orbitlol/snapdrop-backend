@@ -3,9 +3,13 @@ from flask_cors import CORS
 import yt_dlp
 import requests as req
 import re
+import os
 
 app = Flask(__name__)
 CORS(app)
+
+# Path to cookies file (sits alongside app.py in the repo)
+COOKIES_FILE = os.path.join(os.path.dirname(__file__), 'cookies.txt')
 
 def clean_title(title):
     return re.sub(r'[^\w\s-]', '', title).strip()
@@ -13,10 +17,12 @@ def clean_title(title):
 def get_ydl_opts(extra={}):
     opts = {
         'quiet': True,
-        'cookiefile': 'cookies.txt',
         'skip_download': True,
+        # Use cookies for authenticated requests (avoids YouTube bot blocks)
+        'cookiefile': COOKIES_FILE if os.path.exists(COOKIES_FILE) else None,
         'extractor_args': {
             'youtube': {
+                # tv_embedded + web gives the best chance of getting a direct URL
                 'player_client': ['tv_embedded', 'web'],
                 'player_skip': ['webpage', 'config'],
             }
@@ -24,6 +30,31 @@ def get_ydl_opts(extra={}):
     }
     opts.update(extra)
     return opts
+
+def get_best_single_url(data):
+    """
+    Return a single streamable URL + its real content-type.
+    Prefers a progressive (combined video+audio) MP4.
+    Falls back to best available single stream.
+    """
+    # Direct URL on the top-level info dict (progressive stream)
+    if 'url' in data:
+        return data['url'], data.get('ext', 'mp4')
+
+    # Walk the formats list looking for a progressive (has both vcodec & acodec) MP4
+    formats = data.get('formats', [])
+    for f in reversed(formats):  # reversed = highest quality first
+        if (f.get('vcodec') not in (None, 'none')
+                and f.get('acodec') not in (None, 'none')
+                and f.get('url')):
+            return f['url'], f.get('ext', 'mp4')
+
+    # Last resort: any format with a URL
+    for f in reversed(formats):
+        if f.get('url'):
+            return f['url'], f.get('ext', 'mp4')
+
+    raise Exception('Could not resolve a single streamable URL for this video')
 
 @app.route('/')
 def index():
@@ -58,38 +89,52 @@ def download():
     if not url:
         return jsonify({'error': 'Missing url'}), 400
 
+    # Use progressive (combined) format strings — avoids DASH-only streams
+    # that have no single URL to proxy.
     format_map = {
-        '1080p': 'best[height<=1080]',
-        '720p':  'best[height<=720]',
-        '480p':  'best[height<=480]',
-        'audio': 'bestaudio/best',
+        '1080p': 'best[height<=1080][ext=mp4]/best[height<=1080]/best',
+        '720p':  'best[height<=720][ext=mp4]/best[height<=720]/best',
+        '480p':  'best[height<=480][ext=mp4]/best[height<=480]/best',
+        'audio': 'bestaudio[ext=m4a]/bestaudio/best',
     }
-    ydl_format = format_map.get(fmt, 'best[height<=720]')
+    ydl_format = format_map.get(fmt, 'best[height<=720][ext=mp4]/best[height<=720]/best')
     is_audio = fmt == 'audio'
-    ext = 'mp3' if is_audio else 'mp4'
-    content_type = 'audio/mpeg' if is_audio else 'video/mp4'
+    ext = 'm4a' if is_audio else 'mp4'
+    content_type = 'audio/mp4' if is_audio else 'video/mp4'
 
     try:
         opts = get_ydl_opts({'format': ydl_format})
         with yt_dlp.YoutubeDL(opts) as ydl:
             data = ydl.extract_info(url, download=False)
             title = clean_title(data.get('title', 'video'))
-            if 'url' in data:
-                direct_url = data['url']
-            elif 'requested_formats' in data:
-                direct_url = data['requested_formats'][0]['url']
-            else:
-                raise Exception('Could not get download URL')
+            direct_url, resolved_ext = get_best_single_url(data)
 
-        r = req.get(direct_url, stream=True, timeout=60)
+        # Stream the file back to the client
+        # Pass through YouTube's headers so the request looks legitimate
+        headers = {
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/120.0.0.0 Safari/537.36'
+            ),
+            'Referer': 'https://www.youtube.com/',
+        }
+        r = req.get(direct_url, stream=True, timeout=60, headers=headers)
+        r.raise_for_status()
 
         def generate():
-            for chunk in r.iter_content(chunk_size=8192):
+            for chunk in r.iter_content(chunk_size=65536):  # 64 KB chunks
                 if chunk:
                     yield chunk
 
         response = Response(generate(), content_type=content_type)
-        response.headers['Content-Disposition'] = f'attachment; filename="{title}.{ext}"'
+        response.headers['Content-Disposition'] = (
+            f'attachment; filename="{title}.{ext}"'
+        )
+        # Forward Content-Length so browsers show download progress
+        cl = r.headers.get('Content-Length')
+        if cl:
+            response.headers['Content-Length'] = cl
         return response
 
     except Exception as e:
