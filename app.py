@@ -13,7 +13,7 @@ def clean_title(title):
 def get_ydl_opts(extra={}):
     opts = {
         'quiet': True,
-        'cookiefile': 'cookie.txt',
+        'cookiefile': 'cookies.txt',
         'skip_download': True,
         'extractor_args': {
             'youtube': {
@@ -97,4 +97,3 @@ def download():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-    
