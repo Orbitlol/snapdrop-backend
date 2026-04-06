@@ -10,14 +10,19 @@ CORS(app)
 def clean_title(title):
     return re.sub(r'[^\w\s-]', '', title).strip()
 
-YDL_BASE_OPTS = {
-    'quiet': True,
-    'skip_download': True,
-    'extractor_args': {'youtube': {'player_client': ['android']}},
-    'http_headers': {
-        'User-Agent': 'com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip',
+def get_ydl_opts(extra={}):
+    opts = {
+        'quiet': True,
+        'skip_download': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['tv_embedded', 'web'],
+                'player_skip': ['webpage', 'config'],
+            }
+        },
     }
-}
+    opts.update(extra)
+    return opts
 
 @app.route('/')
 def index():
@@ -29,7 +34,7 @@ def info():
     if not url:
         return jsonify({'error': 'Missing url'}), 400
     try:
-        with yt_dlp.YoutubeDL(YDL_BASE_OPTS) as ydl:
+        with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
             data = ydl.extract_info(url, download=False)
         title = clean_title(data.get('title', 'video'))
         base = request.host_url.rstrip('/')
@@ -64,15 +69,18 @@ def download():
     content_type = 'audio/mpeg' if is_audio else 'video/mp4'
 
     try:
-        opts = {**YDL_BASE_OPTS, 'format': ydl_format}
+        opts = get_ydl_opts({'format': ydl_format})
         with yt_dlp.YoutubeDL(opts) as ydl:
             data = ydl.extract_info(url, download=False)
             title = clean_title(data.get('title', 'video'))
-            direct_url = data.get('url') or data['requested_formats'][0]['url']
+            if 'url' in data:
+                direct_url = data['url']
+            elif 'requested_formats' in data:
+                direct_url = data['requested_formats'][0]['url']
+            else:
+                raise Exception('Could not get download URL')
 
-        r = req.get(direct_url, stream=True, headers={
-            'User-Agent': 'com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip'
-        }, timeout=60)
+        r = req.get(direct_url, stream=True, timeout=60)
 
         def generate():
             for chunk in r.iter_content(chunk_size=8192):
