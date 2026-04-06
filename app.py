@@ -20,13 +20,23 @@ def get_ydl_opts(extra={}):
         'skip_download': True,
         # Use cookies for authenticated requests (avoids YouTube bot blocks)
         'cookiefile': COOKIES_FILE if os.path.exists(COOKIES_FILE) else None,
+        'http_headers': {
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/120.0.0.0 Safari/537.36'
+            ),
+        },
         'extractor_args': {
             'youtube': {
-                # tv_embedded + web gives the best chance of getting a direct URL
-                'player_client': ['tv_embedded', 'web'],
-                'player_skip': ['webpage', 'config'],
+                # Improved player client order for better compatibility
+                'player_client': ['android', 'web'],  # Changed from tv_embedded
+                'player_skip': ['javascript', 'configs'],
             }
         },
+        # Add retries for transient failures
+        'socket_timeout': 30,
+        'retries': 3,
     }
     opts.update(extra)
     return opts
@@ -80,7 +90,11 @@ def info():
             }
         })
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        error_msg = str(e)
+        # Provide helpful YouTube-specific error messages
+        if 'Sign in to confirm you\'re not a bot' in error_msg or 'bot' in error_msg.lower():
+            return jsonify({'error': 'YouTube detected bot activity. Please update cookies or try later.'}), 403
+        return jsonify({'error': error_msg}), 500
 
 @app.route('/api/download')
 def download():
@@ -138,7 +152,10 @@ def download():
         return response
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        error_msg = str(e)
+        if 'Sign in to confirm you\'re not a bot' in error_msg or 'bot' in error_msg.lower():
+            return jsonify({'error': 'YouTube detected bot activity. Please update cookies or try later.'}), 403
+        return jsonify({'error': error_msg}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
