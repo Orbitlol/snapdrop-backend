@@ -13,6 +13,7 @@ def clean_title(title):
 def get_ydl_opts(extra={}):
     opts = {
         'quiet': True,
+        'cookiefile': 'cookie.txt',
         'skip_download': True,
         'extractor_args': {
             'youtube': {
