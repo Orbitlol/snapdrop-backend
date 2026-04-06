@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import yt_dlp
+import requests as req
 import re
 
 app = Flask(__name__)
@@ -8,6 +9,20 @@ CORS(app)
 
 def clean_title(title):
     return re.sub(r'[^\w\s-]', '', title).strip()
+
+# Android client headers to bypass YouTube bot detection
+YDL_BASE_OPTS = {
+    'quiet': True,
+    'skip_download': True,
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['android'],
+        }
+    },
+    'http_headers': {
+        'User-Agent': 'com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip',
+    }
+}
 
 @app.route('/')
 def index():
@@ -20,16 +35,15 @@ def info():
         return jsonify({ 'error': 'Missing url' }), 400
 
     try:
-        ydl_opts = { 'quiet': True, 'skip_download': True }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        with yt_dlp.YoutubeDL(YDL_BASE_OPTS) as ydl:
+            data = ydl.extract_info(url, download=False)
 
-        title = clean_title(info.get('title', 'video'))
+        title = clean_title(data.get('title', 'video'))
         base = request.host_url.rstrip('/')
 
         return jsonify({
             'title': title,
-            'thumbnail': info.get('thumbnail'),
+            'thumbnail': data.get('thumbnail'),
             'formats': {
                 'video1080': f"{base}/api/download?url={url}&format=video1080",
                 'video720':  f"{base}/api/download?url={url}&format=video720",
@@ -49,49 +63,34 @@ def download():
 
     if fmt == 'audio':
         ydl_format = 'bestaudio/best'
-        filename = 'audio.mp3'
         content_type = 'audio/mpeg'
-        postprocessors = [{ 'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3' }]
+        ext = 'mp3'
     elif fmt == 'video1080':
         ydl_format = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]/best'
-        filename = 'video-1080p.mp4'
         content_type = 'video/mp4'
-        postprocessors = []
+        ext = 'mp4'
     else:
         ydl_format = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]/best'
-        filename = 'video-720p.mp4'
         content_type = 'video/mp4'
-        postprocessors = []
+        ext = 'mp4'
 
     try:
-        # Get the direct URL from yt-dlp without downloading
-        ydl_opts = {
-            'quiet': True,
-            'skip_download': True,
-            'format': ydl_format,
-        }
+        ydl_opts = {**YDL_BASE_OPTS, 'format': ydl_format}
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            title = clean_title(info.get('title', 'video'))
+            data = ydl.extract_info(url, download=False)
+            title = clean_title(data.get('title', 'video'))
 
-            # Get the best direct URL
-            if 'url' in info:
-                direct_url = info['url']
-            elif 'requested_formats' in info:
-                # Merge streams - use the video one and redirect
-                direct_url = info['requested_formats'][0]['url']
+            if 'requested_formats' in data:
+                direct_url = data['requested_formats'][0]['url']
             else:
-                direct_url = info['url']
+                direct_url = data['url']
 
-        # Stream the file through our server
-        import requests as req
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        r = req.get(direct_url, stream=True, headers=headers, timeout=30)
-
-        ext = 'mp3' if fmt == 'audio' else 'mp4'
         safe_filename = f"{title}.{ext}"
+        stream_headers = {
+            'User-Agent': 'com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip'
+        }
+        r = req.get(direct_url, stream=True, headers=stream_headers, timeout=30)
 
         def generate():
             for chunk in r.iter_content(chunk_size=8192):
