@@ -3,6 +3,8 @@ from flask_cors import CORS
 import yt_dlp
 import requests as req
 import re
+import os
+import tempfile
 
 app = Flask(__name__)
 CORS(app)
@@ -12,7 +14,6 @@ def clean_title(title):
 
 YDL_BASE_OPTS = {
     'quiet': True,
-    'skip_download': True,
     'extractor_args': {
         'youtube': {
             'player_client': ['android'],
@@ -24,10 +25,10 @@ YDL_BASE_OPTS = {
 }
 
 FORMAT_MAP = {
-    '1080p': 'bestvideo[height<=1080][fps>=50][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]',
-    '720p':  'bestvideo[height<=720][fps>=50][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]',
-    '480p':  'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[height<=480]',
-    'audio': 'bestaudio/best',
+    '1080p': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]',
+    '720p':  'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]',
+    '480p':  'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]',
+    'audio': 'bestaudio[ext=m4a]/bestaudio',
 }
 
 @app.route('/')
@@ -41,7 +42,8 @@ def info():
         return jsonify({ 'error': 'Missing url' }), 400
 
     try:
-        with yt_dlp.YoutubeDL(YDL_BASE_OPTS) as ydl:
+        opts = {**YDL_BASE_OPTS, 'skip_download': True}
+        with yt_dlp.YoutubeDL(opts) as ydl:
             data = ydl.extract_info(url, download=False)
 
         title = clean_title(data.get('title', 'video'))
@@ -69,37 +71,50 @@ def download():
         return jsonify({ 'error': 'Missing url' }), 400
 
     ydl_format = FORMAT_MAP.get(fmt, FORMAT_MAP['720p'])
-    content_type = 'audio/mpeg' if fmt == 'audio' else 'video/mp4'
-    ext = 'mp3' if fmt == 'audio' else 'mp4'
+    is_audio = fmt == 'audio'
+    ext = 'mp3' if is_audio else 'mp4'
+    content_type = 'audio/mpeg' if is_audio else 'video/mp4'
 
     try:
-        ydl_opts = {**YDL_BASE_OPTS, 'format': ydl_format}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outpath = os.path.join(tmpdir, f'video.%(ext)s')
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            data = ydl.extract_info(url, download=False)
-            title = clean_title(data.get('title', 'video'))
+            ydl_opts = {
+                **YDL_BASE_OPTS,
+                'format': ydl_format,
+                'outtmpl': outpath,
+                'merge_output_format': 'mp4',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }] if is_audio else [],
+            }
 
-            if 'requested_formats' in data:
-                direct_url = data['requested_formats'][0]['url']
-            else:
-                direct_url = data['url']
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                data = ydl.extract_info(url, download=True)
+                title = clean_title(data.get('title', 'video'))
 
-        safe_filename = f"{title}.{ext}"
-        stream_headers = {
-            'User-Agent': 'com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip'
-        }
-        r = req.get(direct_url, stream=True, headers=stream_headers, timeout=30)
+            # Find the downloaded file
+            files = os.listdir(tmpdir)
+            if not files:
+                raise Exception('Download failed — no file produced.')
 
-        def generate():
-            for chunk in r.iter_content(chunk_size=8192):
-                if chunk:
-                    yield chunk
+            filepath = os.path.join(tmpdir, files[0])
+            safe_filename = f"{title}.{ext}"
 
-        response = Response(generate(), content_type=content_type)
-        response.headers['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
-        if r.headers.get('Content-Length'):
-            response.headers['Content-Length'] = r.headers['Content-Length']
-        return response
+            def generate():
+                with open(filepath, 'rb') as f:
+                    while True:
+                        chunk = f.read(8192)
+                        if not chunk:
+                            break
+                        yield chunk
+
+            response = Response(generate(), content_type=content_type)
+            response.headers['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
+            response.headers['Content-Length'] = os.path.getsize(filepath)
+            return response
 
     except Exception as e:
         return jsonify({ 'error': str(e) }), 500
