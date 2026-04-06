@@ -77,31 +77,33 @@ def download():
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
-            outpath = os.path.join(tmpdir, f'video.%(ext)s')
+            outpath = os.path.join(tmpdir, 'video.%(ext)s')
 
             ydl_opts = {
                 **YDL_BASE_OPTS,
                 'format': ydl_format,
                 'outtmpl': outpath,
                 'merge_output_format': 'mp4',
-                'postprocessors': [{
+            }
+
+            if is_audio:
+                ydl_opts['postprocessors'] = [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
                     'preferredquality': '192',
-                }] if is_audio else [],
-            }
+                }]
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 data = ydl.extract_info(url, download=True)
                 title = clean_title(data.get('title', 'video'))
 
-            # Find the downloaded file
             files = os.listdir(tmpdir)
             if not files:
                 raise Exception('Download failed — no file produced.')
 
             filepath = os.path.join(tmpdir, files[0])
             safe_filename = f"{title}.{ext}"
+            filesize = os.path.getsize(filepath)
 
             def generate():
                 with open(filepath, 'rb') as f:
@@ -113,7 +115,7 @@ def download():
 
             response = Response(generate(), content_type=content_type)
             response.headers['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
-            response.headers['Content-Length'] = os.path.getsize(filepath)
+            response.headers['Content-Length'] = filesize
             return response
 
     except Exception as e:
