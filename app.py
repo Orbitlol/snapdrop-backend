@@ -16,7 +16,7 @@ def get_ydl_opts(extra={}):
         'quiet': True,
         'skip_download': True,
         # Uses the cookie file you uploaded to bypass YouTube bot detection
-        'cookiefile': 'cookies(1).txt', 
+        'cookiefile': 'cookies.txt', 
         'extractor_args': {
             'youtube': {
                 'player_client': ['tv_embedded', 'web'],
