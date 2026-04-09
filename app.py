@@ -16,16 +16,11 @@ COOKIES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies
 def get_ydl_opts(extra={}):
     opts = {
         'quiet': True,
-        'cookiefile': COOKIES_PATH,
-        'skip_download': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios'],
-            }
-        },
     }
+    if os.path.exists(COOKIES_PATH):
+        opts['cookiefile'] = COOKIES_PATH
     opts.update(extra)
     return opts
 
@@ -34,7 +29,8 @@ def is_instagram(url):
 
 @app.route('/')
 def index():
-    return jsonify({'status': 'SnapDrop API running'})
+    cookie_exists = os.path.exists(COOKIES_PATH)
+    return jsonify({'status': 'SnapDrop API running', 'cookies_found': cookie_exists})
 
 @app.route('/api/info')
 def info():
@@ -85,11 +81,17 @@ def download():
         with yt_dlp.YoutubeDL(opts) as ydl:
             data = ydl.extract_info(url, download=False)
             title = clean_title(data.get('title', 'video') or 'video')
+
+            # Handle all possible URL locations
+            direct_url = None
             if 'url' in data:
                 direct_url = data['url']
-            elif 'requested_formats' in data:
+            elif 'requested_formats' in data and data['requested_formats']:
                 direct_url = data['requested_formats'][0]['url']
-            else:
+            elif 'formats' in data and data['formats']:
+                direct_url = data['formats'][-1]['url']
+
+            if not direct_url:
                 raise Exception('Could not get download URL')
 
         r = req.get(direct_url, stream=True, timeout=60)
