@@ -18,15 +18,12 @@ def get_ydl_opts(extra={}):
         'quiet': True,
         'cookiefile': COOKIES_PATH,
         'skip_download': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['tv_embedded', 'web'],
-                'player_skip': ['webpage', 'config'],
-            }
-        },
     }
     opts.update(extra)
     return opts
+
+def is_instagram(url):
+    return 'instagram.com' in url
 
 @app.route('/')
 def index():
@@ -40,8 +37,9 @@ def info():
     try:
         with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
             data = ydl.extract_info(url, download=False)
-        title = clean_title(data.get('title', 'video'))
+        title = clean_title(data.get('title', 'video') or 'video')
         base = request.host_url.rstrip('/')
+        instagram = is_instagram(url)
         return jsonify({
             'title': title,
             'formats': {
@@ -49,7 +47,8 @@ def info():
                 '720p':  f"{base}/api/download?url={url}&format=720p",
                 '480p':  f"{base}/api/download?url={url}&format=480p",
                 'audio': f"{base}/api/download?url={url}&format=audio",
-            }
+            },
+            'instagram': instagram
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -61,22 +60,30 @@ def download():
     if not url:
         return jsonify({'error': 'Missing url'}), 400
 
-    format_map = {
-        '1080p': 'best[height<=1080]',
-        '720p':  'best[height<=720]',
-        '480p':  'best[height<=480]',
-        'audio': 'bestaudio/best',
-    }
-    ydl_format = format_map.get(fmt, 'best[height<=720]')
     is_audio = fmt == 'audio'
     ext = 'mp3' if is_audio else 'mp4'
     content_type = 'audio/mpeg' if is_audio else 'video/mp4'
+
+    # Instagram doesn't support quality selection — just get best
+    if is_instagram(url):
+        if is_audio:
+            ydl_format = 'bestaudio/best'
+        else:
+            ydl_format = 'best'
+    else:
+        format_map = {
+            '1080p': 'best[height<=1080]',
+            '720p':  'best[height<=720]',
+            '480p':  'best[height<=480]',
+            'audio': 'bestaudio/best',
+        }
+        ydl_format = format_map.get(fmt, 'best[height<=720]')
 
     try:
         opts = get_ydl_opts({'format': ydl_format})
         with yt_dlp.YoutubeDL(opts) as ydl:
             data = ydl.extract_info(url, download=False)
-            title = clean_title(data.get('title', 'video'))
+            title = clean_title(data.get('title', 'video') or 'video')
             if 'url' in data:
                 direct_url = data['url']
             elif 'requested_formats' in data:
