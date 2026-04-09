@@ -18,6 +18,13 @@ def get_ydl_opts(extra={}):
         'quiet': True,
         'cookiefile': COOKIES_PATH,
         'skip_download': True,
+        'nocheckcertificate': True,
+        'geo_bypass': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios'],
+            }
+        },
     }
     opts.update(extra)
     return opts
@@ -39,7 +46,6 @@ def info():
             data = ydl.extract_info(url, download=False)
         title = clean_title(data.get('title', 'video') or 'video')
         base = request.host_url.rstrip('/')
-        instagram = is_instagram(url)
         return jsonify({
             'title': title,
             'formats': {
@@ -47,8 +53,7 @@ def info():
                 '720p':  f"{base}/api/download?url={url}&format=720p",
                 '480p':  f"{base}/api/download?url={url}&format=480p",
                 'audio': f"{base}/api/download?url={url}&format=audio",
-            },
-            'instagram': instagram
+            }
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -64,12 +69,8 @@ def download():
     ext = 'mp3' if is_audio else 'mp4'
     content_type = 'audio/mpeg' if is_audio else 'video/mp4'
 
-    # Instagram doesn't support quality selection — just get best
     if is_instagram(url):
-        if is_audio:
-            ydl_format = 'bestaudio/best'
-        else:
-            ydl_format = 'best'
+        ydl_format = 'bestaudio/best' if is_audio else 'best'
     else:
         format_map = {
             '1080p': 'best[height<=1080]',
