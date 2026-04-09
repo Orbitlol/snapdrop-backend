@@ -18,6 +18,11 @@ def get_ydl_opts(extra={}):
         'quiet': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios'],
+            }
+        },
     }
     if os.path.exists(COOKIES_PATH):
         opts['cookiefile'] = COOKIES_PATH
