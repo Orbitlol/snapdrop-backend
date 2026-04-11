@@ -74,10 +74,10 @@ def download():
         ydl_format = 'bestaudio/best' if is_audio else 'best'
     else:
         format_map = {
-            '1080p': 'best[height<=1080]',
-            '720p':  'best[height<=720]',
-            '480p':  'best[height<=480]',
-            'audio': 'bestaudio/best',
+    '1080p': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    '720p':  'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best',
+    '480p':  'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best',
+    'audio': 'bestaudio/best',
         }
         ydl_format = format_map.get(fmt, 'best[height<=720]')
 
