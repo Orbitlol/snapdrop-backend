@@ -17,10 +17,10 @@ def get_ydl_opts(extra={}):
     opts = {
         'quiet': True,
         'nocheckcertificate': True,
-        'geo_bypass': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios'],
+                'player_client': ['android_vr'],
+                'formats': 'missing_pot',
             }
         },
     }
@@ -74,29 +74,25 @@ def download():
         ydl_format = 'bestaudio/best' if is_audio else 'best'
     else:
         format_map = {
-    '1080p': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-    '720p':  'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best',
-    '480p':  'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best',
-    'audio': 'bestaudio/best',
+            '1080p': 'best[height<=1080][ext=mp4]/best[height<=1080]/best',
+            '720p':  'best[height<=720][ext=mp4]/best[height<=720]/best',
+            '480p':  'best[height<=480][ext=mp4]/best[height<=480]/best',
+            'audio': 'bestaudio[ext=m4a]/bestaudio/best',
         }
-        ydl_format = format_map.get(fmt, 'best[height<=720]')
+        ydl_format = format_map.get(fmt, 'best')
 
     try:
         opts = get_ydl_opts({'format': ydl_format})
         with yt_dlp.YoutubeDL(opts) as ydl:
             data = ydl.extract_info(url, download=False)
             title = clean_title(data.get('title', 'video') or 'video')
-
-            # Handle all possible URL locations
-            direct_url = None
             if 'url' in data:
                 direct_url = data['url']
             elif 'requested_formats' in data and data['requested_formats']:
                 direct_url = data['requested_formats'][0]['url']
             elif 'formats' in data and data['formats']:
                 direct_url = data['formats'][-1]['url']
-
-            if not direct_url:
+            else:
                 raise Exception('Could not get download URL')
 
         r = req.get(direct_url, stream=True, timeout=60)
